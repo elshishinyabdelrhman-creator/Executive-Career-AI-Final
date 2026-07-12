@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+Executive-Career-AI/.streamlit/secrets.toml

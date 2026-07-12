@@ -1,0 +1,9 @@
+streamlit
+supabase
+anthropic
+python-dotenv
+pandas
+pypdf
+python-docx
+reportlab
+markdown
