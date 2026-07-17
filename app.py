@@ -16,7 +16,7 @@ from database import (
 from pdf_generator import generate_pdf
 from resume_builder import build_resume
 
-st.set_page_config(page_title="Executive Career Hub V11", page_icon="📄", layout="wide")
+st.set_page_config(page_title="Executive Career Hub V12", page_icon="📄", layout="wide")
 USER = {"name": "Abdelrhman El Shishiny", "email": "elshishinyabdelrhman@gmail.com"}
 STATUS_OPTIONS = ["Applied", "Interview", "Rejected", "Offer", "Withdrawn"]
 
@@ -50,7 +50,7 @@ except Exception as exc:
     st.error(f"Supabase connection failed: {exc}")
     st.stop()
 
-st.title("Executive Career Hub V11")
+st.title("Executive Career Hub V12")
 st.caption("Truthful resume tailoring designed to maximize recruiter response, screening calls, and interview conversion.")
 
 tab_generate, tab_history, tab_dashboard = st.tabs(["Generate Resume", "Application History", "Dashboard"])
@@ -63,6 +63,7 @@ with tab_generate:
         st.success("Master resume is available.")
 
     st.subheader("2. Target vacancy")
+    resume_theme = st.selectbox("Resume design", ["Executive Premium", "ATS Classic", "Modern Corporate", "Consulting", "Big Tech", "Banking", "GCC Executive"], help="Executive Premium is recommended for recruiter impact. ATS Classic is the safest minimal design.")
     c1, c2, c3 = st.columns(3)
     company = c1.text_input("Target company")
     role = c2.text_input("Target role")
@@ -90,7 +91,7 @@ with tab_generate:
                     completed = [line.strip() for line in completed_courses_text.splitlines() if line.strip()]
                     result = tailor_resume(company, role, jd, master_text, completed)
                     resume_text = build_resume(result)
-                    pdf_bytes = generate_pdf(resume_text)
+                    pdf_bytes = generate_pdf(resume_text, resume_theme)
                     row = save_application(user["id"], {
                         "company_name": company, "role_title": role, "location": location,
                         "job_url": job_url, "job_description": jd,
@@ -105,7 +106,7 @@ with tab_generate:
                         "linkedin_about": result.get("linkedin_about", ""), "application_status": "Applied",
                     })
                     st.session_state.update(last_result=result, last_resume=resume_text, last_pdf=pdf_bytes,
-                                            last_company=company, last_saved_id=row["id"])
+                                            last_company=company, last_saved_id=row["id"], last_theme=resume_theme)
                     st.success("Resume generated and application saved.")
             except Exception as exc:
                 st.error(f"Generation failed: {type(exc).__name__}: {exc}")
@@ -193,7 +194,7 @@ with tab_history:
                 update_application(row["id"], {"application_status": status, "notes": notes}); st.rerun()
             if y.button("Delete", key=f"delete_{row['id']}"):
                 delete_application(row["id"]); st.rerun()
-            z.download_button("Download PDF", generate_pdf(row.get("tailored_resume", "") or ""),
+            z.download_button("Download PDF", generate_pdf(row.get("tailored_resume", "") or "", "Executive Premium"),
                 file_name=f"{safe_name(row.get('company_name','company'))}_resume.pdf", mime="application/pdf", key=f"pdf_{row['id']}")
             show_resume(row.get("tailored_resume", "") or "")
 
