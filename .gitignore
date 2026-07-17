@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
-*.py[cod]
-*.egg-info/
+.streamlit/secrets.toml
 .env
-Executive-Career-AI/.streamlit/secrets.toml
+*.db
+*.sqlite
+*.sqlite3
