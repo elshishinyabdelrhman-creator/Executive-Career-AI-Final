@@ -38,3 +38,6 @@ ANTHROPIC_MAX_TOKENS = "8000"
 ```
 
 The app displays actual input/output token usage and an estimated API cost after each generation.
+
+
+Economy architecture: Claude generates only the core resume and evidence analysis. Cover letter, outreach, and interview pack are assembled locally to reduce cost and prevent truncated JSON.

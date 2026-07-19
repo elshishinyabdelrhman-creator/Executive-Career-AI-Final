@@ -13,7 +13,7 @@ from ats_engine import calculate_scores
 from learning_advisor import build_learning_plan
 
 MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-5-haiku-20241022")
-MAX_OUTPUT_TOKENS = int(os.getenv("ANTHROPIC_MAX_TOKENS", "6500"))
+MAX_OUTPUT_TOKENS = int(os.getenv("ANTHROPIC_MAX_TOKENS", "4800"))
 
 
 def _available_model_ids(client: anthropic.Anthropic) -> list[str]:
@@ -199,6 +199,82 @@ def _normalize(data: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _build_local_career_pack(data: dict[str, Any], company: str, role: str) -> dict[str, Any]:
+    """Build non-resume career assets locally to cut Claude output cost and avoid truncation."""
+    name = data.get("candidate_name") or "the candidate"
+    profile = data.get("executive_profile") or ""
+    achievements = data.get("key_achievements") or []
+    skills = data.get("key_skills") or []
+    top_achievement = achievements[0] if achievements else "a track record of commercial growth and cross-functional delivery"
+    top_skills = ", ".join(skills[:4]) if skills else "commercial growth, partnerships, and customer experience"
+
+    recruiter_hook = (
+        f"{name} combines {top_skills} with {top_achievement}, creating a credible transferable fit for the {role} role at {company}."
+    )
+    cover_letter = (
+        f"Dear Hiring Team,\n\nI am applying for the {role} position at {company}. {profile} "
+        f"My experience is especially relevant in {top_skills}. In my recent work, I have delivered {top_achievement}. "
+        "I would bring a commercially focused, data-informed approach, strong stakeholder management, and a disciplined focus on customer experience. "
+        "Where the role requires sector-specific exposure that is not yet part of my background, I would address it transparently and apply my transferable experience without overstating direct ownership.\n\n"
+        "I would welcome the opportunity to discuss how my experience can support the team’s growth priorities.\n\nSincerely,\n"
+        f"{name}"
+    )
+    linkedin_about = (
+        f"{profile} Core strengths include {top_skills}. I focus on translating customer, campaign, and partnership insights into practical commercial action, while leading cross-functional execution and maintaining clear accountability for results."
+    )
+    recruiter_message = (
+        f"Hi, I’m reaching out regarding the {role} opportunity at {company}. My background spans {top_skills}, and I have delivered {top_achievement}. "
+        "I believe the role aligns well with my transferable commercial and digital-commerce experience, and I’d value a brief conversation to explore fit."
+    )
+    referral_message = (
+        f"Hi, I’m interested in the {role} role at {company}. My experience includes {top_skills}, supported by {top_achievement}. "
+        "Would you be comfortable referring me or sharing any insight on the team’s priorities? I’d be grateful for your guidance."
+    )
+    follow_up_message = (
+        f"Hi, I’m following up on my application for the {role} role at {company}. My background in {top_skills} appears closely aligned with the position’s commercial and customer-growth priorities. "
+        "I’d welcome the chance to discuss the role briefly."
+    )
+    elevator_pitch = (
+        f"I’m {name}. {profile} My strongest areas are {top_skills}. A representative achievement is {top_achievement}. "
+        f"I’m now looking to apply that experience to the {role} opportunity at {company}, while being transparent about any industry-specific areas I would need to learn quickly."
+    )
+    questions = [
+        "Why are you interested in this role? — Connect the company’s growth agenda to your strongest transferable evidence.",
+        "Tell me about a measurable commercial result. — Use the strongest verified achievement and explain your exact contribution.",
+        "How do you manage cross-functional stakeholders? — Give one example covering alignment, execution, and outcome.",
+        "Where is your experience less direct? — Acknowledge the gap, then explain the closest supported experience and learning plan.",
+        "How do you use data to make decisions? — Describe the metric, analysis, action, and verified result.",
+    ]
+    star_stories = []
+    for i, ach in enumerate(achievements[:3], start=1):
+        star_stories.append({
+            "title": f"Evidence-based achievement {i}",
+            "situation": "Use the exact business context from the relevant role.",
+            "task": "Explain the objective and your verified responsibility.",
+            "action": "Describe the specific actions evidenced in the master resume.",
+            "result": ach,
+        })
+
+    data.update({
+        "cover_letter": cover_letter,
+        "linkedin_about": linkedin_about,
+        "recruiter_message": recruiter_message,
+        "referral_message": referral_message,
+        "follow_up_message": follow_up_message,
+        "recruiter_hook": recruiter_hook,
+        "elevator_pitch": elevator_pitch,
+        "interview_questions": questions,
+        "star_stories": star_stories,
+        "screening_call_prep": [
+            "Lead with the strongest verified commercial result.",
+            "Explain the closest transferable experience for the target role.",
+            "Acknowledge unsupported industry gaps directly and briefly.",
+            "Prepare one stakeholder-management example and one data-led decision example.",
+        ],
+    })
+    return data
+
+
 def tailor_resume(
     company: str,
     role: str,
@@ -242,44 +318,25 @@ CANDIDATE-CONFIRMED COMPLETED COURSES:
 OUTPUT SCHEMA
 {{
   "candidate_name": "preserve from master resume",
-  "contact_line": "preserve available phone/email/location/LinkedIn only",
+  "contact_line": "preserve available contact details only",
   "company_style": "short description",
   "detected_industry": "target industry",
-  "company_size": "likely company scale or Unknown",
+  "company_size": "likely scale or Unknown",
   "company_focus": "short business focus",
-  "industry_positioning": "truthful functional positioning, 3-8 words",
-  "executive_profile": "90-125 words",
-  "strategic_competencies": ["CATEGORY: item | item | item | item"],
-  "experiences": [
-    {{
-      "dates": "exact original dates",
-      "location": "exact original location if present",
-      "title": "exact original title",
-      "company": "exact original company",
-      "positioning": "current role only: truthful target-aligned positioning line",
-      "bullets": ["evidence-based executive bullet"]
-    }}
-  ],
-  "education": ["preserve exact education"],
-  "languages": ["preserve exact languages and levels"],
+  "industry_positioning": "truthful functional positioning",
+  "executive_profile": "70-95 words",
+  "strategic_competencies": ["CATEGORY: item | item | item"],
+  "experiences": [{{"dates":"exact","location":"exact","title":"exact","company":"exact","positioning":"current role only","bullets":["evidence-based bullet"]}}],
+  "education": ["exact education"],
+  "languages": ["exact languages"],
   "key_skills": ["supported skill"],
-  "completed_courses": ["only candidate-confirmed completed course"],
-  "auto_resume_enhancements": ["supported improvement already applied"],
-  "unsupported_requirements": ["hard target requirement not evidenced"],
-  "improvement_suggestions": ["automatic next-step plan without asking questions"],
-  "cover_letter": "250-330 words",
-  "linkedin_about": "130-180 words",
-  "recruiter_hook": "one sentence explaining why the recruiter should call",
-  "recruiter_objections": ["likely recruiter objection and truthful response strategy"],
-  "recruiter_message": "70-110 word direct LinkedIn message",
-  "referral_message": "70-110 word referral request",
-  "follow_up_message": "50-90 word follow-up after 3-5 days",
-  "screening_call_prep": ["concise screening-call talking point"],
-  "key_achievements": ["short evidence-based highlight using an existing metric or scope"],
-  "evidence_map": [{{"requirement":"target requirement","evidence":"exact resume evidence","confidence":"High|Medium|Low"}}],
-  "elevator_pitch": "45-60 second spoken introduction",
-  "star_stories": [{{"title":"story title","situation":"","task":"","action":"","result":"truthful result; no invented number"}}],
-  "interview_questions": ["likely question followed by a concise answer strategy"]
+  "completed_courses": ["candidate-confirmed only"],
+  "auto_resume_enhancements": ["improvement applied"],
+  "unsupported_requirements": ["unsupported hard requirement"],
+  "improvement_suggestions": ["concise next step"],
+  "recruiter_objections": ["objection and truthful response"],
+  "key_achievements": ["short verified achievement"],
+  "evidence_map": [{{"requirement":"major requirement","evidence":"exact resume evidence or Unsupported","confidence":"High|Medium|Low"}}]
 }}
 
 EVIDENCE RULES
@@ -317,7 +374,6 @@ QUALITY CHECK BEFORE RETURNING
 - The current position title and employer must remain unchanged.
 - Specific grocery, category-management, pricing ownership, supplier negotiation, logistics ownership, or tool proficiency must not appear unless present in the master resume.
 - The first third of page one must make seniority, scope, commercial value, and target relevance immediately clear.
-- Generate concise recruiter outreach, a 45-60 second elevator pitch, exactly 3 STAR stories, and no more than 8 likely interview questions.
 - key_achievements must use only facts already evidenced in the master resume.
 - evidence_map must explicitly show why each major job requirement is supported, transferable, or unsupported.
 - Return exactly one JSON object.
@@ -331,12 +387,20 @@ QUALITY CHECK BEFORE RETURNING
         temperature=0.05,
         messages=[{"role": "user", "content": prompt}],
     )
+    response_text = _response_text(response)
     if getattr(response, "stop_reason", None) == "max_tokens":
-        raise ValueError(
-            "Claude response was truncated before the JSON finished. "
-            "Please retry; the output limit has been increased in this version."
-        )
-    result = _normalize(_parse_json(_response_text(response)))
+        # Try structural repair first. The compact schema normally fits within the limit.
+        try:
+            parsed = _parse_json(response_text)
+        except Exception as exc:
+            raise ValueError(
+                "Claude reached the output limit before completing the compact resume JSON. "
+                "Reduce the master resume or job description length slightly and retry."
+            ) from exc
+    else:
+        parsed = _parse_json(response_text)
+    result = _normalize(parsed)
+    result = _build_local_career_pack(result, company, role)
 
     usage = getattr(response, "usage", None)
     input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
