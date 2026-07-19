@@ -225,9 +225,9 @@ OUTPUT SCHEMA
   "follow_up_message": "50-90 word follow-up after 3-5 days",
   "screening_call_prep": ["concise screening-call talking point"],
   "key_achievements": ["short evidence-based highlight using an existing metric or scope"],
-  "evidence_map": [{"requirement":"target requirement","evidence":"exact resume evidence","confidence":"High|Medium|Low"}],
+  "evidence_map": [{{"requirement":"target requirement","evidence":"exact resume evidence","confidence":"High|Medium|Low"}}],
   "elevator_pitch": "45-60 second spoken introduction",
-  "star_stories": [{"title":"story title","situation":"","task":"","action":"","result":"truthful result; no invented number"}],
+  "star_stories": [{{"title":"story title","situation":"","task":"","action":"","result":"truthful result; no invented number"}}],
   "interview_questions": ["likely question followed by a concise answer strategy"]
 }}
 
