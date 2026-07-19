@@ -26,3 +26,15 @@ SUPABASE_SERVICE_ROLE_KEY = "..."       # optional
 
 The app works without Supabase using SQLite fallback, but Streamlit Cloud may reset local data after a restart.
 Run `supabase_schema.sql` once in Supabase SQL Editor for persistent cloud storage.
+
+
+## Economy mode
+
+The default model is `claude-3-haiku-20240307` to bring typical generation cost back near one cent. You can override it in Streamlit secrets with:
+
+```toml
+ANTHROPIC_MODEL = "claude-haiku-4-5"
+ANTHROPIC_MAX_TOKENS = "8000"
+```
+
+The app displays actual input/output token usage and an estimated API cost after each generation.

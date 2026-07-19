@@ -12,9 +12,10 @@ from json_repair import repair_json
 from ats_engine import calculate_scores
 from learning_advisor import build_learning_plan
 
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
-MAX_RESUME_CHARS = 18000
-MAX_JD_CHARS = 9000
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
+MAX_OUTPUT_TOKENS = int(os.getenv("ANTHROPIC_MAX_TOKENS", "8000"))
+MAX_RESUME_CHARS = 15000
+MAX_JD_CHARS = 7000
 
 
 def _secret(name: str) -> str:
@@ -260,12 +261,12 @@ EVIDENCE RULES
 10. Recommended learning belongs in the development plan, never as completed education.
 
 BULLET EXPANSION RULES
-- Current role: 10-12 bullets.
-- Second role: 8-10 bullets.
-- Third role: 6-8 bullets.
-- Older roles: 4-6 bullets each.
+- Current role: 9-11 bullets.
+- Second role: 6-8 bullets.
+- Third role: 5-7 bullets.
+- Older roles: 2-4 bullets each.
 - Use fewer bullets if the master resume lacks enough evidence; do not fabricate filler.
-- Each bullet should normally be 18-34 words.
+- Each bullet should normally be 16-28 words. Keep wording concise to control generation cost.
 - Start with a strong action verb.
 - Emphasize leadership, commercial objective, scope, collaboration, decision-making, and business value when supported.
 - Include measurable outcomes only when present in the master resume.
@@ -282,7 +283,7 @@ QUALITY CHECK BEFORE RETURNING
 - The current position title and employer must remain unchanged.
 - Specific grocery, category-management, pricing ownership, supplier negotiation, logistics ownership, or tool proficiency must not appear unless present in the master resume.
 - The first third of page one must make seniority, scope, commercial value, and target relevance immediately clear.
-- Generate truthful recruiter outreach, a 45-60 second elevator pitch, 3-5 STAR stories, and likely interview questions.
+- Generate concise recruiter outreach, a 45-60 second elevator pitch, exactly 3 STAR stories, and no more than 8 likely interview questions.
 - key_achievements must use only facts already evidenced in the master resume.
 - evidence_map must explicitly show why each major job requirement is supported, transferable, or unsupported.
 - Return exactly one JSON object.
@@ -290,7 +291,7 @@ QUALITY CHECK BEFORE RETURNING
 
     response = get_client().messages.create(
         model=MODEL,
-        max_tokens=12000,
+        max_tokens=MAX_OUTPUT_TOKENS,
         temperature=0.05,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -300,6 +301,25 @@ QUALITY CHECK BEFORE RETURNING
             "Please retry; the output limit has been increased in this version."
         )
     result = _normalize(_parse_json(_response_text(response)))
+
+    usage = getattr(response, "usage", None)
+    input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+    # Claude 3 Haiku standard API pricing: $0.25/MTok input, $1.25/MTok output.
+    # For an overridden model, this remains an estimate and is labelled accordingly in the UI.
+    model_lower = MODEL.lower()
+    if "claude-3-haiku" in model_lower and "3-5" not in model_lower:
+        input_rate, output_rate = 0.25, 1.25
+    elif "haiku" in model_lower:
+        input_rate, output_rate = 1.0, 5.0
+    else:
+        input_rate, output_rate = 3.0, 15.0
+    result["api_model"] = MODEL
+    result["input_tokens"] = input_tokens
+    result["output_tokens"] = output_tokens
+    result["estimated_api_cost_usd"] = round(
+        (input_tokens * input_rate + output_tokens * output_rate) / 1_000_000, 4
+    )
 
     learning = build_learning_plan(
         job_description=job_description,

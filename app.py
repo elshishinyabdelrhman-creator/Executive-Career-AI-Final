@@ -16,7 +16,7 @@ from database import (
 from pdf_generator import generate_pdf
 from resume_builder import build_resume
 
-st.set_page_config(page_title="Executive Career Hub V13", page_icon="📄", layout="wide")
+st.set_page_config(page_title="Executive Career Hub V13 Economy", page_icon="📄", layout="wide")
 USER = {"name": "Abdelrhman El Shishiny", "email": "elshishinyabdelrhman@gmail.com"}
 STATUS_OPTIONS = ["Applied", "Interview", "Rejected", "Offer", "Withdrawn"]
 
@@ -53,8 +53,8 @@ except Exception as exc:
 if not using_supabase():
     st.warning("Supabase is not configured. The app is running in local SQLite mode; data may reset when Streamlit Cloud restarts.")
 
-st.title("Executive Career Hub V13")
-st.caption("Truthful resume tailoring designed to maximize recruiter response, screening calls, and interview conversion.")
+st.title("Executive Career Hub V13 Economy")
+st.caption("Truthful resume tailoring optimized for recruiter response and low API cost.")
 
 tab_generate, tab_history, tab_dashboard = st.tabs(["Generate Resume", "Application History", "Dashboard"])
 
@@ -122,6 +122,11 @@ with tab_generate:
         m3.metric("Hiring manager fit", f"{result.get('hiring_manager_fit', 0)}%")
         m4.metric("Interview probability", f"{result.get('interview_probability', 0)}%")
         st.info(f"Style: {result.get('company_style','—')} | Industry: {result.get('detected_industry','—')} | Positioning: {result.get('industry_positioning','—')}")
+        st.caption(
+            f"Claude model: {result.get('api_model', '—')} | "
+            f"Tokens: {result.get('input_tokens', 0):,} in / {result.get('output_tokens', 0):,} out | "
+            f"Estimated API cost: ${result.get('estimated_api_cost_usd', 0):.4f}"
+        )
 
         with st.expander("ATS score breakdown", expanded=False):
             labels = {
