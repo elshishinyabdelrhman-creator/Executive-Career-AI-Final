@@ -12,8 +12,42 @@ from json_repair import repair_json
 from ats_engine import calculate_scores
 from learning_advisor import build_learning_plan
 
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
-MAX_OUTPUT_TOKENS = int(os.getenv("ANTHROPIC_MAX_TOKENS", "8000"))
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-5-haiku-20241022")
+MAX_OUTPUT_TOKENS = int(os.getenv("ANTHROPIC_MAX_TOKENS", "6500"))
+
+
+def _available_model_ids(client: anthropic.Anthropic) -> list[str]:
+    """Return model IDs visible to this API key. Falls back safely on older SDKs."""
+    try:
+        page = client.models.list(limit=100)
+        return [str(getattr(item, "id", "")) for item in getattr(page, "data", []) if getattr(item, "id", None)]
+    except Exception:
+        return []
+
+
+def _select_model(client: anthropic.Anthropic) -> str:
+    """Use the configured model when available; otherwise choose the cheapest visible Haiku."""
+    configured = _secret("ANTHROPIC_MODEL") or MODEL
+    available = _available_model_ids(client)
+    if not available or configured in available:
+        return configured
+
+    preferred = [
+        "claude-3-5-haiku-20241022",
+        "claude-haiku-4-5-20251001",
+    ]
+    for model_id in preferred:
+        if model_id in available:
+            return model_id
+
+    haiku_models = [model_id for model_id in available if "haiku" in model_id.lower()]
+    if haiku_models:
+        return sorted(haiku_models)[0]
+
+    raise RuntimeError(
+        f"Configured Claude model '{configured}' is unavailable and no Haiku model is visible to this API key. "
+        f"Available models: {', '.join(available[:20])}"
+    )
 MAX_RESUME_CHARS = 15000
 MAX_JD_CHARS = 7000
 
@@ -289,8 +323,10 @@ QUALITY CHECK BEFORE RETURNING
 - Return exactly one JSON object.
 """
 
-    response = get_client().messages.create(
-        model=MODEL,
+    client = get_client()
+    selected_model = _select_model(client)
+    response = client.messages.create(
+        model=selected_model,
         max_tokens=MAX_OUTPUT_TOKENS,
         temperature=0.05,
         messages=[{"role": "user", "content": prompt}],
@@ -307,14 +343,18 @@ QUALITY CHECK BEFORE RETURNING
     output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
     # Claude 3 Haiku standard API pricing: $0.25/MTok input, $1.25/MTok output.
     # For an overridden model, this remains an estimate and is labelled accordingly in the UI.
-    model_lower = MODEL.lower()
-    if "claude-3-haiku" in model_lower and "3-5" not in model_lower:
+    model_lower = selected_model.lower()
+    if "3-5-haiku" in model_lower:
+        input_rate, output_rate = 0.80, 4.00
+    elif "haiku-4-5" in model_lower or "4-5-haiku" in model_lower:
+        input_rate, output_rate = 1.00, 5.00
+    elif "claude-3-haiku" in model_lower:
         input_rate, output_rate = 0.25, 1.25
     elif "haiku" in model_lower:
-        input_rate, output_rate = 1.0, 5.0
+        input_rate, output_rate = 1.00, 5.00
     else:
-        input_rate, output_rate = 3.0, 15.0
-    result["api_model"] = MODEL
+        input_rate, output_rate = 3.00, 15.00
+    result["api_model"] = selected_model
     result["input_tokens"] = input_tokens
     result["output_tokens"] = output_tokens
     result["estimated_api_cost_usd"] = round(
