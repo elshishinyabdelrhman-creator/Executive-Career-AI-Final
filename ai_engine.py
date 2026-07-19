@@ -155,8 +155,10 @@ def _normalize_experiences(value: Any) -> list[dict[str, Any]]:
         )
     if not output:
         raise ValueError("Claude generated no usable experience entries.")
-    if len(output[0]["bullets"]) < 10:
-        raise ValueError("Current role must contain at least 10 evidence-based bullets.")
+    # Do not fail the entire generation merely because Claude returned fewer than
+    # ten bullets. Truthfulness is more important than padding, and the prompt
+    # already instructs Claude to use fewer bullets when evidence is limited.
+    # A usable current role only needs at least one evidence-based bullet here.
     return output
 
 
