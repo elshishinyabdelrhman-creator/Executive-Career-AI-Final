@@ -1,30 +1,28 @@
-# Executive Career Hub V12
+# Executive Career Hub V13
 
-V12 adds a recruiter-focused three-page executive resume designer.
+A Streamlit career application system focused on truthful recruiter response and interview conversion.
 
-## Resume structure
+## Main features
+- Evidence-constrained Claude resume tailoring
+- Executive Premium three-page PDF
+- ATS, recruiter, hiring-manager and interview-readiness scoring
+- Transferable-experience scoring
+- Cover letter, LinkedIn outreach, referral and follow-up messages
+- Elevator pitch, STAR stories, likely interview questions and evidence map
+- Supabase storage with automatic local SQLite fallback
+- Application outcome dashboard and response-rate tracking
 
-- Page 1: recruiter hook, executive summary, career highlights, current role.
-- Page 2: earlier professional experience.
-- Page 3: competencies, skills, education, languages, and professional development.
+## Streamlit Cloud deployment
+1. Upload all project files to GitHub.
+2. Set `app.py` as the entry point.
+3. Add these secrets in Streamlit Cloud:
 
-## Included themes
-
-- Executive Premium
-- ATS Classic
-- Modern Corporate
-- Consulting
-- Big Tech
-- Banking
-- GCC Executive
-
-## Run locally
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
+```toml
+ANTHROPIC_API_KEY = "..."
+ANTHROPIC_MODEL = "claude-haiku-4-5"
+SUPABASE_URL = "https://....supabase.co" # optional
+SUPABASE_SERVICE_ROLE_KEY = "..."       # optional
 ```
 
-## Streamlit Cloud
-
-Use `app.py` as the main file and add the values from `.streamlit/secrets.toml.example` to the Streamlit app Secrets panel.
+The app works without Supabase using SQLite fallback, but Streamlit Cloud may reset local data after a restart.
+Run `supabase_schema.sql` once in Supabase SQL Editor for persistent cloud storage.

@@ -11,12 +11,12 @@ from ai_engine import tailor_resume
 from database import (
     DatabaseError, dashboard_stats, delete_application, get_master_resume,
     get_or_create_user, list_applications, save_application, save_master_resume,
-    update_application,
+    update_application, using_supabase,
 )
 from pdf_generator import generate_pdf
 from resume_builder import build_resume
 
-st.set_page_config(page_title="Executive Career Hub V12", page_icon="📄", layout="wide")
+st.set_page_config(page_title="Executive Career Hub V13", page_icon="📄", layout="wide")
 USER = {"name": "Abdelrhman El Shishiny", "email": "elshishinyabdelrhman@gmail.com"}
 STATUS_OPTIONS = ["Applied", "Interview", "Rejected", "Offer", "Withdrawn"]
 
@@ -47,10 +47,13 @@ def show_resume(text: str) -> None:
 try:
     user = get_or_create_user(USER["name"], USER["email"])
 except Exception as exc:
-    st.error(f"Supabase connection failed: {exc}")
+    st.error(f"Database initialization failed: {exc}")
     st.stop()
 
-st.title("Executive Career Hub V12")
+if not using_supabase():
+    st.warning("Supabase is not configured. The app is running in local SQLite mode; data may reset when Streamlit Cloud restarts.")
+
+st.title("Executive Career Hub V13")
 st.caption("Truthful resume tailoring designed to maximize recruiter response, screening calls, and interview conversion.")
 
 tab_generate, tab_history, tab_dashboard = st.tabs(["Generate Resume", "Application History", "Dashboard"])
@@ -125,7 +128,7 @@ with tab_generate:
                 "keyword_score": "Keyword coverage", "leadership_score": "Leadership",
                 "tools_score": "Tools", "responsibility_score": "Responsibilities",
                 "commercial_score": "Commercial impact", "industry_score": "Industry",
-                "evidence_score": "Evidence integrity", "recruiter_hook_score": "Recruiter hook",
+                "evidence_score": "Evidence integrity", "transferability_score": "Transferable fit", "recruiter_hook_score": "Recruiter hook",
                 "parseability_score": "ATS parseability",
             }
             for key, label in labels.items():
@@ -154,7 +157,7 @@ with tab_generate:
             st.markdown("**Improvement plan**")
             for item in result.get("improvement_suggestions", []): st.write("•", item)
 
-        a, b, c, d = st.tabs(["Resume preview", "Cover letter", "LinkedIn & Outreach", "Screening Call Prep"])
+        a, b, c, d, e = st.tabs(["Resume preview", "Cover letter", "LinkedIn & Outreach", "Interview Conversion Pack", "Evidence Map"])
         with a:
             st.download_button("Download PDF", st.session_state["last_pdf"],
                 file_name=f"{safe_name(st.session_state['last_company'])}_resume.pdf", mime="application/pdf")
@@ -168,12 +171,27 @@ with tab_generate:
         with d:
             st.markdown("**Recruiter hook**")
             st.success(result.get("recruiter_hook", "—"))
-            st.markdown("**Likely objections and response strategy**")
+            st.markdown("**45–60 second elevator pitch**")
+            st.text_area("Elevator pitch", result.get("elevator_pitch", ""), height=160, label_visibility="collapsed")
+            st.markdown("**Likely objections and truthful response strategy**")
             for item in result.get("recruiter_objections", []) or ["No major objection generated."]:
                 st.write("•", item)
             st.markdown("**Screening-call talking points**")
             for item in result.get("screening_call_prep", []) or ["No preparation points generated."]:
                 st.write("•", item)
+            st.markdown("**Likely interview questions**")
+            for item in result.get("interview_questions", []) or ["No questions generated."]:
+                st.write("•", item)
+            st.markdown("**STAR stories**")
+            for story in result.get("star_stories", []):
+                with st.expander(story.get("title", "Interview story")):
+                    for label in ("situation", "task", "action", "result"):
+                        st.markdown(f"**{label.title()}:** {story.get(label, '—')}")
+        with e:
+            st.markdown("**Evidence-to-requirement map**")
+            for item in result.get("evidence_map", []):
+                confidence = item.get("confidence", "—")
+                st.markdown(f"**{item.get('requirement','Requirement')}** — `{confidence}`  \n{item.get('evidence','No evidence supplied')}")
 
 with tab_history:
     st.header("Application History")
@@ -200,6 +218,6 @@ with tab_history:
 
 with tab_dashboard:
     stats = dashboard_stats(user["id"])
-    a, b, c, d, e = st.columns(5)
+    a, b, c, d, e, f = st.columns(6)
     a.metric("Applications", stats["total"]); b.metric("Average ATS", f"{stats['avg_ats']}%")
-    c.metric("Average Match", f"{stats['avg_match']}%"); d.metric("Interviews", stats["interviews"]); e.metric("Offers", stats["offers"])
+    c.metric("Average Match", f"{stats['avg_match']}%"); d.metric("Interviews", stats["interviews"]); e.metric("Offers", stats["offers"]); f.metric("Response rate", f"{stats.get('response_rate',0)}%")

@@ -136,6 +136,11 @@ def _normalize(data: dict[str, Any]) -> dict[str, Any]:
         "recruiter_hook": _string(data.get("recruiter_hook")),
         "recruiter_objections": _list(data.get("recruiter_objections"), 8),
         "screening_call_prep": _list(data.get("screening_call_prep"), 10),
+        "key_achievements": _list(data.get("key_achievements"), 8),
+        "evidence_map": data.get("evidence_map") if isinstance(data.get("evidence_map"), list) else [],
+        "elevator_pitch": str(data.get("elevator_pitch") or "").strip(),
+        "star_stories": data.get("star_stories") if isinstance(data.get("star_stories"), list) else [],
+        "interview_questions": _list(data.get("interview_questions"), 12),
     }
     required = ["executive_profile", "strategic_competencies", "experiences", "key_skills"]
     if any(not result[key] for key in required):
@@ -218,7 +223,12 @@ OUTPUT SCHEMA
   "recruiter_message": "70-110 word direct LinkedIn message",
   "referral_message": "70-110 word referral request",
   "follow_up_message": "50-90 word follow-up after 3-5 days",
-  "screening_call_prep": ["concise screening-call talking point"]
+  "screening_call_prep": ["concise screening-call talking point"],
+  "key_achievements": ["short evidence-based highlight using an existing metric or scope"],
+  "evidence_map": [{"requirement":"target requirement","evidence":"exact resume evidence","confidence":"High|Medium|Low"}],
+  "elevator_pitch": "45-60 second spoken introduction",
+  "star_stories": [{"title":"story title","situation":"","task":"","action":"","result":"truthful result; no invented number"}],
+  "interview_questions": ["likely question followed by a concise answer strategy"]
 }}
 
 EVIDENCE RULES
@@ -256,7 +266,9 @@ QUALITY CHECK BEFORE RETURNING
 - The current position title and employer must remain unchanged.
 - Specific grocery, category-management, pricing ownership, supplier negotiation, logistics ownership, or tool proficiency must not appear unless present in the master resume.
 - The first third of page one must make seniority, scope, commercial value, and target relevance immediately clear.
-- Generate truthful recruiter outreach and screening-call preparation.
+- Generate truthful recruiter outreach, a 45-60 second elevator pitch, 3-5 STAR stories, and likely interview questions.
+- key_achievements must use only facts already evidenced in the master resume.
+- evidence_map must explicitly show why each major job requirement is supported, transferable, or unsupported.
 - Return exactly one JSON object.
 """
 
