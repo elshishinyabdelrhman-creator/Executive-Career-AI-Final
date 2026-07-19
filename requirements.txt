@@ -3,3 +3,5 @@ anthropic>=0.57
 supabase>=2.15
 pypdf>=5.8
 reportlab>=4.4
+
+json-repair>=0.46

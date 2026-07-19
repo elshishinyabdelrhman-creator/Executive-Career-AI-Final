@@ -7,6 +7,7 @@ from typing import Any
 
 import anthropic
 import streamlit as st
+from json_repair import repair_json
 
 from ats_engine import calculate_scores
 from learning_advisor import build_learning_plan
@@ -44,23 +45,38 @@ def _response_text(response: Any) -> str:
 
 
 def _parse_json(text: str) -> dict[str, Any]:
+    """Parse Claude output and repair minor JSON syntax mistakes safely."""
     cleaned = text.replace("```json", "").replace("```", "").strip()
-    try:
-        value = json.loads(cleaned)
-        if isinstance(value, dict):
-            return value
-    except json.JSONDecodeError:
-        pass
+
+    candidates = [cleaned]
     start, end = cleaned.find("{"), cleaned.rfind("}")
-    if start < 0 or end <= start:
-        raise ValueError("AI response did not contain a JSON object.")
-    try:
-        value = json.loads(cleaned[start : end + 1])
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Claude returned invalid JSON: {exc}") from exc
-    if not isinstance(value, dict):
-        raise ValueError("Claude response JSON must be an object.")
-    return value
+    if start >= 0 and end > start:
+        candidates.append(cleaned[start : end + 1])
+
+    last_error: Exception | None = None
+    for candidate in candidates:
+        try:
+            value = json.loads(candidate)
+            if isinstance(value, dict):
+                return value
+        except json.JSONDecodeError as exc:
+            last_error = exc
+
+        # Claude occasionally misses a comma, quote, or closing bracket in long JSON.
+        # json-repair fixes syntax only; it does not invent resume content.
+        try:
+            repaired = repair_json(candidate, return_objects=True)
+            if isinstance(repaired, dict):
+                return repaired
+            if isinstance(repaired, str):
+                value = json.loads(repaired)
+                if isinstance(value, dict):
+                    return value
+        except Exception as exc:
+            last_error = exc
+
+    detail = f": {last_error}" if last_error else ""
+    raise ValueError(f"Claude returned invalid JSON{detail}")
 
 
 def _string(value: Any) -> str:
@@ -274,10 +290,15 @@ QUALITY CHECK BEFORE RETURNING
 
     response = get_client().messages.create(
         model=MODEL,
-        max_tokens=7000,
+        max_tokens=12000,
         temperature=0.05,
         messages=[{"role": "user", "content": prompt}],
     )
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        raise ValueError(
+            "Claude response was truncated before the JSON finished. "
+            "Please retry; the output limit has been increased in this version."
+        )
     result = _normalize(_parse_json(_response_text(response)))
 
     learning = build_learning_plan(
