@@ -56,14 +56,26 @@ def _conn() -> sqlite3.Connection:
       id TEXT PRIMARY KEY, user_id TEXT UNIQUE NOT NULL, raw_resume TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS applications (
-      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, company_name TEXT, role_title TEXT, location TEXT,
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, serial_number INTEGER, company_name TEXT, role_title TEXT, location TEXT,
       job_url TEXT, job_description TEXT, detected_industry TEXT, company_size TEXT, company_style TEXT,
       company_focus TEXT, ats_score INTEGER DEFAULT 0, match_score INTEGER DEFAULT 0,
       interview_probability INTEGER DEFAULT 0, resume_version TEXT, tailored_resume TEXT,
-      cover_letter TEXT, linkedin_about TEXT, application_status TEXT DEFAULT 'Applied', notes TEXT,
-      interview_notes TEXT, recruiter_name TEXT, recruiter_email TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      cover_letter TEXT, linkedin_about TEXT, generation_data TEXT, completed_courses TEXT, resume_theme TEXT,
+      application_status TEXT DEFAULT 'Applied', notes TEXT, interview_notes TEXT, recruiter_name TEXT, recruiter_email TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     """)
+    # Safe migrations for existing local databases.
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(applications)").fetchall()}
+    migrations = {
+        "serial_number": "INTEGER",
+        "generation_data": "TEXT",
+        "completed_courses": "TEXT",
+        "resume_theme": "TEXT",
+    }
+    for column, column_type in migrations.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE applications ADD COLUMN {column} {column_type}")
     return conn
 
 
@@ -120,17 +132,39 @@ def get_master_resume(user_id: str) -> dict[str, Any] | None:
         return _dict(db.execute("SELECT * FROM master_resume WHERE user_id=?", (user_id,)).fetchone())
 
 
+def _next_serial_number(user_id: str) -> int:
+    if using_supabase():
+        rows = (get_supabase().table("applications").select("serial_number")
+                .eq("user_id", user_id).order("serial_number", desc=True).limit(1).execute().data or [])
+        return int(rows[0].get("serial_number") or 0) + 1 if rows else 1
+    with _conn() as db:
+        row = db.execute("SELECT COALESCE(MAX(serial_number), 0) AS maximum FROM applications WHERE user_id=?", (user_id,)).fetchone()
+        return int(row["maximum"] or 0) + 1
+
+
 def save_application(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     allowed = ["company_name","role_title","location","job_url","job_description","detected_industry",
                "company_size","company_style","company_focus","ats_score","match_score","interview_probability",
-               "resume_version","tailored_resume","cover_letter","linkedin_about","application_status","notes"]
+               "resume_version","tailored_resume","cover_letter","linkedin_about","generation_data",
+               "completed_courses","resume_theme","application_status","notes"]
     row = {k: payload.get(k, "") for k in allowed}
-    row.update(user_id=user_id, ats_score=int(payload.get("ats_score",0)), match_score=int(payload.get("match_score",0)),
-               interview_probability=int(payload.get("interview_probability",0)), application_status=payload.get("application_status","Applied"))
+    row.update(
+        user_id=user_id,
+        serial_number=int(payload.get("serial_number") or _next_serial_number(user_id)),
+        ats_score=int(payload.get("ats_score", 0)),
+        match_score=int(payload.get("match_score", 0)),
+        interview_probability=int(payload.get("interview_probability", 0)),
+        application_status=payload.get("application_status", "Applied"),
+    )
     if using_supabase():
         rows = get_supabase().table("applications").insert(row).execute().data
-        if not rows: raise DatabaseError("Could not save application.")
+        if not rows:
+            raise DatabaseError("Could not save application.")
         return rows[0]
+    if isinstance(row.get("generation_data"), (dict, list)):
+        row["generation_data"] = json.dumps(row["generation_data"], ensure_ascii=False)
+    if isinstance(row.get("completed_courses"), (dict, list)):
+        row["completed_courses"] = json.dumps(row["completed_courses"], ensure_ascii=False)
     row.update(id=str(uuid.uuid4()), created_at=_now(), updated_at=_now())
     cols = list(row); marks = ",".join("?" for _ in cols)
     with _conn() as db:

@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS master_resume (
 CREATE TABLE IF NOT EXISTS applications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    serial_number INTEGER,
     company_name TEXT NOT NULL,
     role_title TEXT NOT NULL,
     location TEXT,
@@ -45,6 +46,9 @@ CREATE TABLE IF NOT EXISTS applications (
     tailored_resume TEXT,
     cover_letter TEXT,
     linkedin_about TEXT,
+    generation_data JSONB DEFAULT '{}'::jsonb,
+    completed_courses JSONB DEFAULT '[]'::jsonb,
+    resume_theme TEXT,
     interview_notes TEXT,
     application_status TEXT DEFAULT 'Applied',
     recruiter_name TEXT,
@@ -79,3 +83,24 @@ ALTER TABLE company_cache ENABLE ROW LEVEL SECURITY;
 
 -- This Streamlit app uses the service-role key only on the server.
 -- Do not expose the service-role key in source control or client-side code.
+
+
+-- Safe migration for existing Supabase projects
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS serial_number INTEGER;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS generation_data JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS completed_courses JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS resume_theme TEXT;
+
+-- Backfill missing serial numbers per user in chronological order.
+WITH numbered AS (
+    SELECT id, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at, id) AS seq
+    FROM applications
+    WHERE serial_number IS NULL
+)
+UPDATE applications a
+SET serial_number = numbered.seq
+FROM numbered
+WHERE a.id = numbered.id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_applications_user_serial
+ON applications(user_id, serial_number);

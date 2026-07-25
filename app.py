@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 from typing import Any
 
@@ -18,7 +19,7 @@ from resume_builder import build_resume
 
 st.set_page_config(page_title="Executive Career Hub V13 Economy", page_icon="📄", layout="wide")
 USER = {"name": "Abdelrhman El Shishiny", "email": "elshishinyabdelrhman@gmail.com"}
-STATUS_OPTIONS = ["Applied", "Interview", "Rejected", "Offer", "Withdrawn"]
+STATUS_OPTIONS = ["Applied", "HR Viewed", "Phone Screen", "Interview 1", "Interview 2", "Final Interview", "Offer", "Accepted", "Rejected", "Withdrawn"]
 
 st.markdown("""
 <style>
@@ -106,7 +107,9 @@ with tab_generate:
                         "interview_probability": result.get("interview_probability", 0),
                         "resume_version": result.get("industry_positioning", ""),
                         "tailored_resume": resume_text, "cover_letter": result.get("cover_letter", ""),
-                        "linkedin_about": result.get("linkedin_about", ""), "application_status": "Applied",
+                        "linkedin_about": result.get("linkedin_about", ""),
+                        "generation_data": result, "completed_courses": completed,
+                        "resume_theme": resume_theme, "application_status": "Applied",
                     })
                     st.session_state.update(last_result=result, last_resume=resume_text, last_pdf=pdf_bytes,
                                             last_company=company, last_saved_id=row["id"], last_theme=resume_theme)
@@ -205,21 +208,107 @@ with tab_history:
         rows = list_applications(user["id"], search)
     except DatabaseError as exc:
         st.error(str(exc)); rows = []
-    if not rows: st.info("No saved applications found.")
-    for row in rows:
-        with st.expander(f"{row.get('company_name','')} | {row.get('role_title','')} | Match {row.get('match_score',0)}% | ATS {row.get('ats_score',0)}%"):
-            status = st.selectbox("Status", STATUS_OPTIONS,
-                index=STATUS_OPTIONS.index(row.get("application_status", "Applied")) if row.get("application_status") in STATUS_OPTIONS else 0,
-                key=f"status_{row['id']}")
-            notes = st.text_area("Notes", row.get("notes", "") or "", key=f"notes_{row['id']}")
-            x, y, z = st.columns(3)
-            if x.button("Save", key=f"save_{row['id']}"):
-                update_application(row["id"], {"application_status": status, "notes": notes}); st.rerun()
-            if y.button("Delete", key=f"delete_{row['id']}"):
-                delete_application(row["id"]); st.rerun()
-            z.download_button("Download PDF", generate_pdf(row.get("tailored_resume", "") or "", "Executive Premium"),
-                file_name=f"{safe_name(row.get('company_name','company'))}_resume.pdf", mime="application/pdf", key=f"pdf_{row['id']}")
+
+    if not rows:
+        st.info("No saved applications found.")
+    else:
+        import pandas as pd
+
+        table_rows = []
+        for row in rows:
+            created = str(row.get("created_at", ""))
+            table_rows.append({
+                "Serial": int(row.get("serial_number") or 0),
+                "Date": created[:10],
+                "Company": row.get("company_name", ""),
+                "Position": row.get("role_title", ""),
+                "Location": row.get("location", ""),
+                "ATS": int(row.get("ats_score") or 0),
+                "Recruiter Match": int(row.get("match_score") or 0),
+                "Interview Probability": int(row.get("interview_probability") or 0),
+                "Status": row.get("application_status", "Applied"),
+                "JD Saved": "Yes" if str(row.get("job_description", "")).strip() else "No",
+            })
+
+        history_df = pd.DataFrame(table_rows).sort_values("Serial", ascending=False)
+        st.dataframe(
+            history_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "ATS": st.column_config.ProgressColumn("ATS", min_value=0, max_value=100, format="%d%%"),
+                "Recruiter Match": st.column_config.ProgressColumn("Recruiter Match", min_value=0, max_value=100, format="%d%%"),
+                "Interview Probability": st.column_config.ProgressColumn("Interview Probability", min_value=0, max_value=100, format="%d%%"),
+            },
+        )
+
+        row_by_serial = {int(r.get("serial_number") or 0): r for r in rows}
+        serial_options = sorted(row_by_serial, reverse=True)
+        selected_serial = st.selectbox(
+            "Open application",
+            serial_options,
+            format_func=lambda value: f"#{value} — {row_by_serial[value].get('company_name','')} | {row_by_serial[value].get('role_title','')}",
+        )
+        row = row_by_serial[selected_serial]
+
+        st.subheader(f"Application #{selected_serial}: {row.get('company_name','')} — {row.get('role_title','')}")
+        a, b, c, d = st.columns(4)
+        a.metric("ATS", f"{int(row.get('ats_score') or 0)}%")
+        b.metric("Recruiter Match", f"{int(row.get('match_score') or 0)}%")
+        c.metric("Interview Probability", f"{int(row.get('interview_probability') or 0)}%")
+        d.metric("Created", str(row.get("created_at", ""))[:10] or "—")
+
+        status = st.selectbox(
+            "Status", STATUS_OPTIONS,
+            index=STATUS_OPTIONS.index(row.get("application_status", "Applied")) if row.get("application_status") in STATUS_OPTIONS else 0,
+            key=f"status_{row['id']}",
+        )
+        notes = st.text_area("Notes", row.get("notes", "") or "", key=f"notes_{row['id']}")
+        x, y, z = st.columns(3)
+        if x.button("Save changes", key=f"save_{row['id']}"):
+            update_application(row["id"], {"application_status": status, "notes": notes}); st.rerun()
+        if y.button("Delete application", key=f"delete_{row['id']}"):
+            delete_application(row["id"]); st.rerun()
+        z.download_button(
+            "Download Resume PDF",
+            generate_pdf(row.get("tailored_resume", "") or "", row.get("resume_theme") or "Executive Premium"),
+            file_name=f"{safe_name(row.get('company_name','company'))}_resume.pdf",
+            mime="application/pdf", key=f"pdf_{row['id']}",
+        )
+
+        details, jd_tab, resume_tab, cover_tab, data_tab = st.tabs([
+            "Application Details", "Full Job Description", "Generated Resume", "Cover Letter", "All Saved Data"
+        ])
+        with details:
+            st.markdown(f"**Company:** {row.get('company_name','—')}")
+            st.markdown(f"**Position:** {row.get('role_title','—')}")
+            st.markdown(f"**Location:** {row.get('location','—')}")
+            st.markdown(f"**Job URL:** {row.get('job_url','—') or '—'}")
+            st.markdown(f"**Detected industry:** {row.get('detected_industry','—') or '—'}")
+            st.markdown(f"**Resume theme:** {row.get('resume_theme','—') or '—'}")
+        with jd_tab:
+            jd_value = row.get("job_description", "") or ""
+            if jd_value.strip():
+                st.text_area("Saved job description", jd_value, height=500, disabled=True, key=f"jd_{row['id']}")
+                st.download_button("Download JD as TXT", jd_value, file_name=f"{safe_name(row.get('company_name','company'))}_job_description.txt", mime="text/plain", key=f"jd_dl_{row['id']}")
+            else:
+                st.warning("This older application does not contain a saved job description.")
+        with resume_tab:
             show_resume(row.get("tailored_resume", "") or "")
+        with cover_tab:
+            st.text_area("Saved cover letter", row.get("cover_letter", "") or "No cover letter saved.", height=500, disabled=True, key=f"cover_{row['id']}")
+        with data_tab:
+            raw_data = row.get("generation_data", "") or ""
+            try:
+                parsed_data = json.loads(raw_data) if isinstance(raw_data, str) and raw_data.strip() else raw_data
+            except Exception:
+                parsed_data = raw_data
+            if parsed_data:
+                st.json(parsed_data)
+            else:
+                st.info("No structured generation data was saved for this older application.")
+            with st.expander("Database record"):
+                st.json({k: v for k, v in row.items() if k not in {"tailored_resume", "cover_letter", "job_description", "generation_data"}})
 
 with tab_dashboard:
     stats = dashboard_stats(user["id"])

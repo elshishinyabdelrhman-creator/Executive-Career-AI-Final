@@ -41,3 +41,11 @@ The app displays actual input/output token usage and an estimated API cost after
 
 
 Economy architecture: Claude generates only the core resume and evidence analysis. Cover letter, outreach, and interview pack are assembled locally to reduce cost and prevent truncated JSON.
+
+
+## Application History CRM update
+
+- Displays all applications in a searchable table with a per-user serial number.
+- Saves the complete job description, generated resume, cover letter, model output, completed courses, scores, status, notes, URL, location, and resume theme.
+- Opens each application in a detailed record with dedicated tabs for the JD, resume, cover letter, and all structured data.
+- Existing SQLite databases migrate automatically. For Supabase, run `supabase_schema.sql` once in the SQL Editor before deploying this update.
