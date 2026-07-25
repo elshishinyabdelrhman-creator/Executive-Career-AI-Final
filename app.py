@@ -218,7 +218,7 @@ with tab_history:
         for row in rows:
             created = str(row.get("created_at", ""))
             table_rows.append({
-                "Serial": int(row.get("serial_number") or 0),
+                "Serial": int(row.get("display_serial") or row.get("serial_number") or 0),
                 "Date": created[:10],
                 "Company": row.get("company_name", ""),
                 "Position": row.get("role_title", ""),
@@ -242,7 +242,7 @@ with tab_history:
             },
         )
 
-        row_by_serial = {int(r.get("serial_number") or 0): r for r in rows}
+        row_by_serial = {int(r.get("display_serial") or r.get("serial_number") or 0): r for r in rows}
         serial_options = sorted(row_by_serial, reverse=True)
         selected_serial = st.selectbox(
             "Open application",

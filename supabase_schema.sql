@@ -91,16 +91,20 @@ ALTER TABLE applications ADD COLUMN IF NOT EXISTS generation_data JSONB DEFAULT 
 ALTER TABLE applications ADD COLUMN IF NOT EXISTS completed_courses JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE applications ADD COLUMN IF NOT EXISTS resume_theme TEXT;
 
--- Backfill missing serial numbers per user in chronological order.
+-- Repair ALL serial numbers per user in chronological order.
+-- This fixes legacy NULL, zero, duplicate, and gapped values.
+DROP INDEX IF EXISTS idx_applications_user_serial;
+
 WITH numbered AS (
-    SELECT id, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at, id) AS seq
+    SELECT id, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at ASC, id ASC) AS seq
     FROM applications
-    WHERE serial_number IS NULL
 )
 UPDATE applications a
 SET serial_number = numbered.seq
 FROM numbered
 WHERE a.id = numbered.id;
+
+ALTER TABLE applications ALTER COLUMN serial_number SET NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_applications_user_serial
 ON applications(user_id, serial_number);

@@ -132,6 +132,44 @@ def get_master_resume(user_id: str) -> dict[str, Any] | None:
         return _dict(db.execute("SELECT * FROM master_resume WHERE user_id=?", (user_id,)).fetchone())
 
 
+def repair_serial_numbers(user_id: str) -> list[dict[str, Any]]:
+    """Renumber every application for one user as 1..N in chronological order.
+
+    This repairs legacy NULL/0/duplicate serials and closes gaps after deletion.
+    The database UUID remains the stable internal identifier.
+    """
+    if using_supabase():
+        db = get_supabase()
+        rows = (db.table("applications").select("id,serial_number,created_at")
+                .eq("user_id", user_id).order("created_at", desc=False).execute().data or [])
+        expected = list(range(1, len(rows) + 1))
+        current = [int(r.get("serial_number") or 0) for r in rows]
+        if current != expected:
+            # Use temporary negative values first so a unique (user_id, serial_number)
+            # index cannot collide while numbers are being reassigned.
+            for i, row in enumerate(rows, start=1):
+                db.table("applications").update({"serial_number": -i}).eq("id", row["id"]).execute()
+            for i, row in enumerate(rows, start=1):
+                db.table("applications").update({"serial_number": i}).eq("id", row["id"]).execute()
+                row["serial_number"] = i
+        return rows
+
+    with _conn() as db:
+        rows = [dict(x) for x in db.execute(
+            "SELECT id, serial_number, created_at FROM applications WHERE user_id=? ORDER BY created_at ASC, id ASC",
+            (user_id,),
+        ).fetchall()]
+        expected = list(range(1, len(rows) + 1))
+        current = [int(r.get("serial_number") or 0) for r in rows]
+        if current != expected:
+            for i, row in enumerate(rows, start=1):
+                db.execute("UPDATE applications SET serial_number=? WHERE id=?", (-i, row["id"]))
+            for i, row in enumerate(rows, start=1):
+                db.execute("UPDATE applications SET serial_number=? WHERE id=?", (i, row["id"]))
+                row["serial_number"] = i
+        return rows
+
+
 def _next_serial_number(user_id: str) -> int:
     if using_supabase():
         rows = (get_supabase().table("applications").select("serial_number")
@@ -173,15 +211,40 @@ def save_application(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def list_applications(user_id: str, search: str = "", limit: int = 500) -> list[dict[str, Any]]:
+    # Repair old NULL/zero/duplicate serials. If database permissions block the
+    # migration, the UI still gets a correct calculated display serial below.
+    try:
+        repair_serial_numbers(user_id)
+    except Exception:
+        pass
+
     if using_supabase():
         rows = (get_supabase().table("applications").select("*").eq("user_id", user_id)
                 .order("created_at", desc=True).limit(limit).execute().data or [])
     else:
         with _conn() as db:
-            rows = [dict(x) for x in db.execute("SELECT * FROM applications WHERE user_id=? ORDER BY created_at DESC LIMIT ?", (user_id, limit)).fetchall()]
+            rows = [dict(x) for x in db.execute(
+                "SELECT * FROM applications WHERE user_id=? ORDER BY created_at DESC, id DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()]
+
+    # Reliable UI sequence: oldest application is #1. This is independent of
+    # legacy database values and therefore can never display duplicate zeros.
+    chronological = sorted(
+        rows,
+        key=lambda r: (str(r.get("created_at") or ""), str(r.get("id") or "")),
+    )
+    display_by_id = {str(r.get("id")): i for i, r in enumerate(chronological, start=1)}
+    for row in rows:
+        row["display_serial"] = display_by_id.get(
+            str(row.get("id")), int(row.get("serial_number") or 0)
+        )
+
     if search:
         term = search.casefold()
-        rows = [r for r in rows if term in " ".join(str(r.get(k,"")) for k in ("company_name","role_title","application_status")).casefold()]
+        rows = [r for r in rows if term in " ".join(
+            str(r.get(k, "")) for k in ("company_name", "role_title", "application_status")
+        ).casefold()]
     return rows
 
 
@@ -197,9 +260,22 @@ def update_application(application_id: str, payload: dict[str, Any]) -> None:
 
 
 def delete_application(application_id: str) -> None:
+    user_id = ""
     if using_supabase():
-        get_supabase().table("applications").delete().eq("id", application_id).execute(); return
-    with _conn() as db: db.execute("DELETE FROM applications WHERE id=?", (application_id,))
+        db = get_supabase()
+        found = db.table("applications").select("user_id").eq("id", application_id).limit(1).execute().data or []
+        if found:
+            user_id = str(found[0].get("user_id") or "")
+        db.table("applications").delete().eq("id", application_id).execute()
+        if user_id:
+            repair_serial_numbers(user_id)
+        return
+    with _conn() as db:
+        row = db.execute("SELECT user_id FROM applications WHERE id=?", (application_id,)).fetchone()
+        user_id = str(row["user_id"]) if row else ""
+        db.execute("DELETE FROM applications WHERE id=?", (application_id,))
+    if user_id:
+        repair_serial_numbers(user_id)
 
 
 def dashboard_stats(user_id: str) -> dict[str, Any]:

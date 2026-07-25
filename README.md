@@ -49,3 +49,11 @@ Economy architecture: Claude generates only the core resume and evidence analysi
 - Saves the complete job description, generated resume, cover letter, model output, completed courses, scores, status, notes, URL, location, and resume theme.
 - Opens each application in a detailed record with dedicated tabs for the JD, resume, cover letter, and all structured data.
 - Existing SQLite databases migrate automatically. For Supabase, run `supabase_schema.sql` once in the SQL Editor before deploying this update.
+
+## Serial number repair
+
+This build automatically repairs legacy application serials that are `0`, `NULL`, duplicated, or contain gaps. Applications are numbered `1..N` per user in chronological order. Deleting an application automatically closes the numbering gap. Run `supabase_schema.sql` once in Supabase SQL Editor after deployment to repair all existing cloud records and create the unique serial index.
+
+## Serial Number Fix
+
+This build repairs legacy Application History serial values (NULL, 0, duplicates, and gaps), displays a reliable chronological serial in the UI, and renumbers applications after deletion. Run `supabase_schema.sql` once in Supabase SQL Editor after deployment.
