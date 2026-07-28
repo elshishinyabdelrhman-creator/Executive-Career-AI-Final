@@ -154,14 +154,22 @@ def display_result(
     premium_pdf_bytes: bytes,
     premium_docx_bytes: bytes,
 ) -> None:
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Evidence fit", f"{int(result.get('match', 0))}%")
-    c2.metric("Tailored ATS coverage", f"{int(result.get('ats', 0))}%")
-    c3.metric(
-        "Interview estimate",
-        f"{int(result.get('interview_probability', 0))}%",
-    )
-    c4.metric("Truthfulness", f"{int(result.get('truthfulness_score', 100))}%")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("JD match", f"{int(result.get('match', 0))}%")
+    c2.metric("ATS keyword coverage", f"{int(result.get('ats', 0))}%")
+    c3.metric("Core requirement coverage", f"{int(result.get('hard_requirement_fit', 0))}%")
+    c4.metric("Interview positioning", f"{int(result.get('interview_probability', 0))}%")
+    c5.metric("JD keywords inserted", str(int(result.get('keyword_count', 0))))
+
+    priority = str(result.get("application_priority", "—"))
+    if priority == "Strong ATS alignment":
+        st.success(f"Application positioning: {priority}")
+    elif priority == "Competitive ATS alignment":
+        st.info(f"Application positioning: {priority}")
+    elif priority == "Moderate ATS alignment":
+        st.warning(f"Application positioning: {priority}")
+    else:
+        st.error(f"Application positioning: {priority}")
 
     st.info(
         f"Style: {result.get('company_style', '—')} | "
@@ -169,42 +177,35 @@ def display_result(
         f"Positioning: {result.get('industry_positioning', '—')}"
     )
 
-    with st.expander("Requirement coverage, evidence gaps, and improvement plan"):
+    with st.expander("Requirement keyword coverage and improvement plan"):
         matched = result.get("matched_requirements", [])
         transferable = result.get("transferable_requirements", [])
         missing = result.get("unsupported_requirements", result.get("missing_keywords", []))
-        removed_claims = result.get("unsupported_generated_claims", [])
         recommended = result.get("recommended_courses", [])
         suggestions = result.get("improvement_suggestions", [])
         selected = result.get("selected_completed_courses", [])
 
-        st.markdown("**Matched in the tailored resume**")
+        st.markdown("**Fully covered JD requirements**")
         if matched:
             for item in matched:
                 st.write("•", item)
         else:
             st.write("No direct requirement matches detected.")
 
-        st.markdown("**Covered through transferable experience**")
+        st.markdown("**Partially covered JD requirements**")
         if transferable:
             for item in transferable:
                 st.write("•", item)
         else:
             st.write("No transferable matches detected.")
 
-        st.markdown("**Real evidence gaps — not inserted as experience**")
+        st.markdown("**JD requirements needing more keyword coverage**")
         if missing:
             for item in missing:
                 st.write("•", item)
         else:
             st.write("No material evidence gaps detected.")
 
-        st.markdown("**Unsupported AI claims automatically removed**")
-        if removed_claims:
-            for item in removed_claims:
-                st.write("•", item)
-        else:
-            st.write("No unsupported critical claims were detected.")
 
         st.markdown("**Completed courses added to the resume**")
         if selected:
@@ -293,9 +294,9 @@ except Exception as exc:
     st.stop()
 
 
-st.title("Executive Career Hub V16")
+st.title("Executive Career Hub V18")
 st.caption(
-    "Evidence-based fit scoring, post-tailoring ATS coverage, claim validation, dynamic career highlights, "
+    "Aggressive JD keyword targeting, dynamic career highlights, ATS coverage scoring, "
     "premium PDF/DOCX export, Supabase history, and application tracking."
 )
 
@@ -402,7 +403,7 @@ with tab_generate:
                 completed_courses = parse_completed_courses(completed_courses_text)
 
                 with st.spinner(
-                    "Analyzing the role and tailoring defensible resume sections..."
+                    "Analyzing the role and maximizing JD keyword coverage..."
                 ):
                     result = tailor_resume(
                         company=company,

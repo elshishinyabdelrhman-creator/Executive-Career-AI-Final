@@ -66,7 +66,7 @@ CAREER_HIGHLIGHT_CANDIDATES = [
         "impact_label": "BUDGET GOVERNANCE",
         "impact_text": "Managed a portfolio of experiential and commercial projects totaling SAR 30M.",
         "category": "budget",
-        "keywords": ["budget", "financial", "portfolio", "investment", "cost", "commercial", "project governance", "p&l"],
+        "keywords": ["budget", "financial governance", "portfolio investment", "investment", "cost control", "project governance", "p&l"],
         "priority": 10,
     },
     {
@@ -237,7 +237,7 @@ CAREER_HIGHLIGHT_CANDIDATES = [
         "impact_label": "BUSINESS EDUCATION",
         "impact_text": "MBA-qualified with a strong foundation in business management and commercial decision-making.",
         "category": "education",
-        "keywords": ["mba", "business", "strategy", "commercial", "financial", "management"],
+        "keywords": ["mba", "master degree", "masters degree", "postgraduate", "education"],
         "priority": 5,
     },
     {
