@@ -154,13 +154,14 @@ def display_result(
     premium_pdf_bytes: bytes,
     premium_docx_bytes: bytes,
 ) -> None:
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Match", f"{int(result.get('match', 0))}%")
-    c2.metric("ATS estimate", f"{int(result.get('ats', 0))}%")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Evidence fit", f"{int(result.get('match', 0))}%")
+    c2.metric("Tailored ATS coverage", f"{int(result.get('ats', 0))}%")
     c3.metric(
         "Interview estimate",
         f"{int(result.get('interview_probability', 0))}%",
     )
+    c4.metric("Truthfulness", f"{int(result.get('truthfulness_score', 100))}%")
 
     st.info(
         f"Style: {result.get('company_style', '—')} | "
@@ -168,18 +169,42 @@ def display_result(
         f"Positioning: {result.get('industry_positioning', '—')}"
     )
 
-    with st.expander("ATS gaps, courses, and improvement plan"):
-        missing = result.get("missing_keywords", [])
+    with st.expander("Requirement coverage, evidence gaps, and improvement plan"):
+        matched = result.get("matched_requirements", [])
+        transferable = result.get("transferable_requirements", [])
+        missing = result.get("unsupported_requirements", result.get("missing_keywords", []))
+        removed_claims = result.get("unsupported_generated_claims", [])
         recommended = result.get("recommended_courses", [])
         suggestions = result.get("improvement_suggestions", [])
         selected = result.get("selected_completed_courses", [])
 
-        st.markdown("**Unsupported or weak requirements**")
+        st.markdown("**Matched in the tailored resume**")
+        if matched:
+            for item in matched:
+                st.write("•", item)
+        else:
+            st.write("No direct requirement matches detected.")
+
+        st.markdown("**Covered through transferable experience**")
+        if transferable:
+            for item in transferable:
+                st.write("•", item)
+        else:
+            st.write("No transferable matches detected.")
+
+        st.markdown("**Real evidence gaps — not inserted as experience**")
         if missing:
             for item in missing:
                 st.write("•", item)
         else:
-            st.write("No major unsupported requirements detected.")
+            st.write("No material evidence gaps detected.")
+
+        st.markdown("**Unsupported AI claims automatically removed**")
+        if removed_claims:
+            for item in removed_claims:
+                st.write("•", item)
+        else:
+            st.write("No unsupported critical claims were detected.")
 
         st.markdown("**Completed courses added to the resume**")
         if selected:
@@ -268,10 +293,10 @@ except Exception as exc:
     st.stop()
 
 
-st.title("Executive Career Hub V15")
+st.title("Executive Career Hub V16")
 st.caption(
-    "JD-driven career highlights, truthful resume tailoring, premium executive PDF/DOCX export, "
-    "ATS export, persistent Supabase history, and application tracking."
+    "Evidence-based fit scoring, post-tailoring ATS coverage, claim validation, dynamic career highlights, "
+    "premium PDF/DOCX export, Supabase history, and application tracking."
 )
 
 tab_generate, tab_history, tab_dashboard = st.tabs(
