@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import html
-import json
 import re
 from typing import Any
 
@@ -10,308 +9,669 @@ from pypdf import PdfReader
 
 from ai_engine import tailor_resume
 from database import (
-    DatabaseError, dashboard_stats, delete_application, get_master_resume,
-    get_or_create_user, list_applications, save_application, save_master_resume,
-    update_application, using_supabase,
+    DatabaseError,
+    dashboard_stats,
+    delete_application,
+    get_master_resume,
+    get_or_create_user,
+    list_applications,
+    save_application,
+    save_master_resume,
+    test_connection,
+    update_application,
 )
 from pdf_generator import generate_pdf
+from premium_resume_generator import generate_premium_docx, generate_premium_pdf
 from resume_builder import build_resume
 
-st.set_page_config(page_title="Executive Career Hub V13 Economy", page_icon="📄", layout="wide")
-USER = {"name": "Abdelrhman El Shishiny", "email": "elshishinyabdelrhman@gmail.com"}
-STATUS_OPTIONS = ["Applied", "HR Viewed", "Phone Screen", "Interview 1", "Interview 2", "Final Interview", "Offer", "Accepted", "Rejected", "Withdrawn"]
 
-st.markdown("""
-<style>
-.paper{background:white;border:1px solid #d8d8d8;padding:38px;white-space:pre-wrap;line-height:1.55;font-family:Arial,sans-serif;color:#111}
-.stButton>button{width:100%;font-weight:700}.small-note{color:#666;font-size:.88rem}
-</style>
-""", unsafe_allow_html=True)
+st.set_page_config(
+    page_title="Executive Career Hub",
+    page_icon="📄",
+    layout="wide",
+)
+
+USER = {
+    "name": "Abdelrhman El Shishiny",
+    "email": "elshishinyabdelrhman@gmail.com",
+}
+
+STATUS_OPTIONS = [
+    "Applied",
+    "Screening",
+    "Interview",
+    "Assessment",
+    "Final Interview",
+    "Offer",
+    "Rejected",
+    "Withdrawn",
+]
+
+st.markdown(
+    """
+    <style>
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+        max-width: 1450px;
+    }
+
+    .paper {
+        background: white;
+        border: 1px solid #d8d8d8;
+        border-radius: 10px;
+        padding: 36px;
+        white-space: pre-wrap;
+        line-height: 1.52;
+        font-family: Arial, sans-serif;
+        color: #111;
+        box-shadow: 0 2px 12px rgba(0,0,0,.04);
+    }
+
+    .subtle-card {
+        border: 1px solid #e5e5e5;
+        border-radius: 10px;
+        padding: 16px;
+        background: white;
+    }
+
+    .stButton > button {
+        width: 100%;
+        font-weight: 700;
+    }
+
+    .stDownloadButton > button {
+        width: 100%;
+        font-weight: 700;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 def extract_pdf(uploaded_file) -> str:
     reader = PdfReader(uploaded_file)
-    text = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
-    if not text:
-        raise ValueError("No readable text was found in the PDF.")
+    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    if len(text) < 200:
+        raise ValueError(
+            "The uploaded PDF contains too little readable text. "
+            "Use a text-based PDF, not a scanned image."
+        )
+
     return text
 
 
 def safe_name(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_-]+", "_", value).strip("_") or "resume"
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value or "")).strip("_")
+    return cleaned or "resume"
 
 
 def show_resume(text: str) -> None:
-    st.markdown(f'<div class="paper">{html.escape(text)}</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="paper">{html.escape(text or "")}</div>',
+        unsafe_allow_html=True,
+    )
 
+
+def initialize_session() -> None:
+    defaults = {
+        "last_result": None,
+        "last_resume": "",
+        "last_pdf": b"",
+        "last_premium_pdf": b"",
+        "last_premium_docx": b"",
+        "last_company": "",
+        "last_saved_id": "",
+        "master_resume_text": "",
+    }
+
+    for key, value in defaults.items():
+        st.session_state.setdefault(key, value)
+
+
+def parse_completed_courses(raw_text: str) -> list[str]:
+    items: list[str] = []
+    seen: set[str] = set()
+
+    for line in str(raw_text or "").splitlines():
+        course = line.strip(" •-\t")
+        key = course.casefold()
+
+        if course and key not in seen:
+            seen.add(key)
+            items.append(course)
+
+    return items
+
+
+def display_result(
+    result: dict[str, Any],
+    resume_text: str,
+    pdf_bytes: bytes,
+    premium_pdf_bytes: bytes,
+    premium_docx_bytes: bytes,
+) -> None:
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Match", f"{int(result.get('match', 0))}%")
+    c2.metric("ATS estimate", f"{int(result.get('ats', 0))}%")
+    c3.metric(
+        "Interview estimate",
+        f"{int(result.get('interview_probability', 0))}%",
+    )
+
+    st.info(
+        f"Style: {result.get('company_style', '—')} | "
+        f"Industry: {result.get('detected_industry', '—')} | "
+        f"Positioning: {result.get('industry_positioning', '—')}"
+    )
+
+    with st.expander("ATS gaps, courses, and improvement plan"):
+        missing = result.get("missing_keywords", [])
+        recommended = result.get("recommended_courses", [])
+        suggestions = result.get("improvement_suggestions", [])
+        selected = result.get("selected_completed_courses", [])
+
+        st.markdown("**Unsupported or weak requirements**")
+        if missing:
+            for item in missing:
+                st.write("•", item)
+        else:
+            st.write("No major unsupported requirements detected.")
+
+        st.markdown("**Completed courses added to the resume**")
+        if selected:
+            for item in selected:
+                st.write("•", item)
+        else:
+            st.write("No completed courses were added.")
+
+        st.markdown("**Recommended courses — not listed as completed**")
+        if recommended:
+            for item in recommended:
+                st.write("•", item)
+        else:
+            st.write("No additional course recommendations.")
+
+        st.markdown("**Improvement suggestions**")
+        if suggestions:
+            for item in suggestions:
+                st.write("•", item)
+        else:
+            st.write("No additional suggestions.")
+
+    st.markdown("### Download versions")
+    d1, d2, d3 = st.columns(3)
+
+    d1.download_button(
+        "Download Premium PDF",
+        data=premium_pdf_bytes,
+        file_name=f"{safe_name(st.session_state['last_company'])}_premium_resume.pdf",
+        mime="application/pdf",
+        disabled=not bool(premium_pdf_bytes),
+    )
+    d2.download_button(
+        "Download Premium Word",
+        data=premium_docx_bytes,
+        file_name=f"{safe_name(st.session_state['last_company'])}_premium_resume.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        disabled=not bool(premium_docx_bytes),
+    )
+    d3.download_button(
+        "Download ATS PDF",
+        data=pdf_bytes,
+        file_name=f"{safe_name(st.session_state['last_company'])}_ats_resume.pdf",
+        mime="application/pdf",
+        disabled=not bool(pdf_bytes),
+    )
+
+    cover_letter = str(result.get("cover_letter", "") or "")
+    st.download_button(
+        "Download cover letter",
+        data=cover_letter.encode("utf-8"),
+        file_name=f"{safe_name(st.session_state['last_company'])}_cover_letter.txt",
+        mime="text/plain",
+        disabled=not bool(cover_letter),
+    )
+
+    with st.expander("Cover letter"):
+        st.text_area(
+            "Generated cover letter",
+            value=cover_letter,
+            height=260,
+            disabled=True,
+            label_visibility="collapsed",
+        )
+
+    with st.expander("LinkedIn About"):
+        st.text_area(
+            "Generated LinkedIn About",
+            value=str(result.get("linkedin_about", "") or ""),
+            height=220,
+            disabled=True,
+            label_visibility="collapsed",
+        )
+
+    st.markdown("### Resume preview")
+    show_resume(resume_text)
+
+
+initialize_session()
 
 try:
+    test_connection()
     user = get_or_create_user(USER["name"], USER["email"])
 except Exception as exc:
-    st.error(f"Database initialization failed: {exc}")
+    st.error(f"Supabase connection failed: {exc}")
     st.stop()
 
-if not using_supabase():
-    st.warning("Supabase is not configured. The app is running in local SQLite mode; data may reset when Streamlit Cloud restarts.")
 
-st.title("Executive Career Hub V13 Economy")
-st.caption("Truthful resume tailoring optimized for recruiter response and low API cost.")
+st.title("Executive Career Hub V15")
+st.caption(
+    "JD-driven career highlights, truthful resume tailoring, premium executive PDF/DOCX export, "
+    "ATS export, persistent Supabase history, and application tracking."
+)
 
-tab_generate, tab_history, tab_dashboard = st.tabs(["Generate Resume", "Application History", "Dashboard"])
+tab_generate, tab_history, tab_dashboard = st.tabs(
+    [
+        "Generate Resume",
+        "Application History",
+        "Dashboard",
+    ]
+)
+
 
 with tab_generate:
     st.subheader("1. Master resume")
+
     saved_master = get_master_resume(user["id"])
-    resume_file = st.file_uploader("Upload or replace your master resume PDF", type=["pdf"])
-    if saved_master and saved_master.get("raw_resume"):
-        st.success("Master resume is available.")
 
-    st.subheader("2. Target vacancy")
-    resume_theme = st.selectbox("Resume design", ["Executive Premium", "ATS Classic", "Modern Corporate", "Consulting", "Big Tech", "Banking", "GCC Executive"], help="Executive Premium is recommended for recruiter impact. ATS Classic is the safest minimal design.")
-    c1, c2, c3 = st.columns(3)
-    company = c1.text_input("Target company")
-    role = c2.text_input("Target role")
-    location = c3.text_input("Location", value="Jeddah, Saudi Arabia")
-    job_url = st.text_input("Job URL (optional)")
-    completed_courses_text = st.text_area(
-        "Your existing courses/certifications (optional)",
-        placeholder="One per line. Only items entered here are treated as completed.", height=100,
-    )
-    jd = st.text_area("Job description", height=310)
-
-    if st.button("Generate complete tailored resume", type="primary"):
-        if not all([company.strip(), role.strip(), jd.strip()]):
-            st.warning("Complete the company, role, and job description fields.")
-        elif not resume_file and not (saved_master and saved_master.get("raw_resume")):
-            st.warning("Upload a master resume first.")
-        else:
-            try:
-                with st.spinner("Extracting evidence, resolving ATS gaps, and expanding executive experience..."):
-                    if resume_file:
-                        master_text = extract_pdf(resume_file)
-                        save_master_resume(user["id"], master_text)
-                    else:
-                        master_text = saved_master["raw_resume"]
-                    completed = [line.strip() for line in completed_courses_text.splitlines() if line.strip()]
-                    result = tailor_resume(company, role, jd, master_text, completed)
-                    resume_text = build_resume(result)
-                    pdf_bytes = generate_pdf(resume_text, resume_theme)
-                    row = save_application(user["id"], {
-                        "company_name": company, "role_title": role, "location": location,
-                        "job_url": job_url, "job_description": jd,
-                        "detected_industry": result.get("detected_industry", ""),
-                        "company_size": result.get("company_size", ""),
-                        "company_style": result.get("company_style", ""),
-                        "company_focus": result.get("company_focus", ""),
-                        "ats_score": result.get("ats", 0), "match_score": result.get("match", 0),
-                        "interview_probability": result.get("interview_probability", 0),
-                        "resume_version": result.get("industry_positioning", ""),
-                        "tailored_resume": resume_text, "cover_letter": result.get("cover_letter", ""),
-                        "linkedin_about": result.get("linkedin_about", ""),
-                        "generation_data": result, "completed_courses": completed,
-                        "resume_theme": resume_theme, "application_status": "Applied",
-                    })
-                    st.session_state.update(last_result=result, last_resume=resume_text, last_pdf=pdf_bytes,
-                                            last_company=company, last_saved_id=row["id"], last_theme=resume_theme)
-                    st.success("Resume generated and application saved.")
-            except Exception as exc:
-                st.error(f"Generation failed: {type(exc).__name__}: {exc}")
-
-    if st.session_state.get("last_resume"):
-        result: dict[str, Any] = st.session_state["last_result"]
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("ATS readiness", f"{result.get('ats_readiness', result.get('ats', 0))}%")
-        m2.metric("Recruiter match", f"{result.get('recruiter_match', result.get('match', 0))}%")
-        m3.metric("Hiring manager fit", f"{result.get('hiring_manager_fit', 0)}%")
-        m4.metric("Interview probability", f"{result.get('interview_probability', 0)}%")
-        st.info(f"Style: {result.get('company_style','—')} | Industry: {result.get('detected_industry','—')} | Positioning: {result.get('industry_positioning','—')}")
-        st.caption(
-            f"Claude model: {result.get('api_model', '—')} | "
-            f"Tokens: {result.get('input_tokens', 0):,} in / {result.get('output_tokens', 0):,} out | "
-            f"Estimated API cost: ${result.get('estimated_api_cost_usd', 0):.4f}"
+    if saved_master and not st.session_state["master_resume_text"]:
+        st.session_state["master_resume_text"] = str(
+            saved_master.get("raw_resume", "") or ""
         )
 
-        with st.expander("ATS score breakdown", expanded=False):
-            labels = {
-                "keyword_score": "Keyword coverage", "leadership_score": "Leadership",
-                "tools_score": "Tools", "responsibility_score": "Responsibilities",
-                "commercial_score": "Commercial impact", "industry_score": "Industry",
-                "evidence_score": "Evidence integrity", "transferability_score": "Transferable fit", "recruiter_hook_score": "Recruiter hook",
-                "parseability_score": "ATS parseability",
-            }
-            for key, label in labels.items():
-                st.progress(int(result.get(key, 0)) / 100, text=f"{label}: {result.get(key, 0)}%")
+    master_file = st.file_uploader(
+        "Upload or replace your master resume PDF",
+        type=["pdf"],
+        help="The text is stored in Supabase so you do not need to upload it every time.",
+    )
 
-        with st.expander("ATS gaps, courses, and improvement plan", expanded=True):
-            st.markdown("**Automatic resume enhancements already applied**")
-            for item in result.get("auto_resume_enhancements", []) or ["No additional supported enhancements were required."]:
-                st.write("✓", item)
-            st.markdown("**Unsupported or weak requirements**")
-            for item in result.get("unsupported_requirements", []) or ["No major unsupported hard requirements detected."]:
-                st.write("•", item)
-            st.markdown("**Completed courses added to the resume**")
-            for item in result.get("completed_courses", []) or ["No completed courses were added."]:
-                st.write("•", item)
-            st.markdown("**AI professional development focus**")
-            for item in result.get("recommended_courses", []): st.write("•", item)
-            st.markdown("**Tools evidenced in your master resume**")
-            st.write(" | ".join(result.get("evidenced_tools", [])) or "None detected.")
-            st.markdown("**Tools to learn for this vacancy**")
-            st.write(" | ".join(result.get("tools_to_learn", [])) or "No additional tools detected.")
-            st.markdown("**Recommended books**")
-            for item in result.get("recommended_books", []): st.write("•", item)
-            st.markdown("**Priority industry keywords**")
-            st.write(" | ".join(result.get("industry_keywords", [])))
-            st.markdown("**Improvement plan**")
-            for item in result.get("improvement_suggestions", []): st.write("•", item)
+    save_master_col, master_status_col = st.columns([1, 2])
 
-        a, b, c, d, e = st.tabs(["Resume preview", "Cover letter", "LinkedIn & Outreach", "Interview Conversion Pack", "Evidence Map"])
-        with a:
-            st.download_button("Download PDF", st.session_state["last_pdf"],
-                file_name=f"{safe_name(st.session_state['last_company'])}_resume.pdf", mime="application/pdf")
-            show_resume(st.session_state["last_resume"])
-        with b: st.text_area("Cover letter", result.get("cover_letter", ""), height=380)
-        with c:
-            st.text_area("LinkedIn About", result.get("linkedin_about", ""), height=260)
-            st.text_area("Recruiter message", result.get("recruiter_message", ""), height=160)
-            st.text_area("Referral request", result.get("referral_message", ""), height=160)
-            st.text_area("Follow-up after 3-5 days", result.get("follow_up_message", ""), height=140)
-        with d:
-            st.markdown("**Recruiter hook**")
-            st.success(result.get("recruiter_hook", "—"))
-            st.markdown("**45–60 second elevator pitch**")
-            st.text_area("Elevator pitch", result.get("elevator_pitch", ""), height=160, label_visibility="collapsed")
-            st.markdown("**Likely objections and truthful response strategy**")
-            for item in result.get("recruiter_objections", []) or ["No major objection generated."]:
-                st.write("•", item)
-            st.markdown("**Screening-call talking points**")
-            for item in result.get("screening_call_prep", []) or ["No preparation points generated."]:
-                st.write("•", item)
-            st.markdown("**Likely interview questions**")
-            for item in result.get("interview_questions", []) or ["No questions generated."]:
-                st.write("•", item)
-            st.markdown("**STAR stories**")
-            for story in result.get("star_stories", []):
-                with st.expander(story.get("title", "Interview story")):
-                    for label in ("situation", "task", "action", "result"):
-                        st.markdown(f"**{label.title()}:** {story.get(label, '—')}")
-        with e:
-            st.markdown("**Evidence-to-requirement map**")
-            for item in result.get("evidence_map", []):
-                confidence = item.get("confidence", "—")
-                st.markdown(f"**{item.get('requirement','Requirement')}** — `{confidence}`  \n{item.get('evidence','No evidence supplied')}")
+    if save_master_col.button("Save master resume", type="secondary"):
+        if not master_file:
+            st.warning("Upload a PDF first.")
+        else:
+            try:
+                master_text = extract_pdf(master_file)
+                save_master_resume(
+                    user["id"],
+                    raw_resume=master_text,
+                    structured_resume={},
+                )
+                st.session_state["master_resume_text"] = master_text
+                st.success("Master resume saved in Supabase.")
+            except Exception as exc:
+                st.error(f"Could not save master resume: {exc}")
+
+    if st.session_state["master_resume_text"]:
+        master_status_col.success("Master resume is available.")
+    else:
+        master_status_col.warning("No master resume is saved yet.")
+
+    st.divider()
+    st.subheader("2. Target vacancy")
+
+    left, right = st.columns(2)
+
+    with left:
+        company = st.text_input("Target company")
+        role = st.text_input("Target role")
+        location = st.text_input(
+            "Location",
+            value="Jeddah, Saudi Arabia",
+        )
+        job_url = st.text_input("Job URL (optional)")
+
+    with right:
+        completed_courses_text = st.text_area(
+            "Completed courses/certifications only",
+            placeholder=(
+                "One per line. Only items you actually completed "
+                "can appear in the resume."
+            ),
+            height=168,
+        )
+
+    jd = st.text_area(
+        "Job description",
+        height=300,
+        placeholder="Paste the complete job description here.",
+    )
+
+    uploaded_for_generation = st.file_uploader(
+        "Use a different resume for this application (optional)",
+        type=["pdf"],
+        key="application_resume_override",
+        help="Leave empty to use the master resume saved in Supabase.",
+    )
+
+    if st.button("Generate tailored resume", type="primary"):
+        if not company.strip() or not role.strip() or not jd.strip():
+            st.warning("Complete the company, role, and job description.")
+        else:
+            try:
+                if uploaded_for_generation:
+                    master_text = extract_pdf(uploaded_for_generation)
+                else:
+                    master_text = st.session_state["master_resume_text"]
+
+                if not master_text:
+                    raise ValueError(
+                        "Save a master resume or upload a resume for this application."
+                    )
+
+                completed_courses = parse_completed_courses(completed_courses_text)
+
+                with st.spinner(
+                    "Analyzing the role and tailoring defensible resume sections..."
+                ):
+                    result = tailor_resume(
+                        company=company,
+                        role=role,
+                        job_description=jd,
+                        master_resume=master_text,
+                        completed_courses=completed_courses,
+                    )
+
+                    resume_text = build_resume(result)
+                    pdf_bytes = generate_pdf(resume_text)
+                    premium_pdf_bytes = generate_premium_pdf(
+                        result,
+                        target_role=role,
+                    )
+                    premium_docx_bytes = generate_premium_docx(
+                        result,
+                        target_role=role,
+                    )
+
+                    app_row = save_application(
+                        user["id"],
+                        {
+                            "company_name": company,
+                            "role_title": role,
+                            "location": location,
+                            "job_url": job_url,
+                            "job_description": jd,
+                            "detected_industry": result.get(
+                                "detected_industry",
+                                "",
+                            ),
+                            "company_size": result.get("company_size", ""),
+                            "company_style": result.get("company_style", ""),
+                            "company_focus": result.get("company_focus", ""),
+                            "ats_score": result.get("ats", 0),
+                            "match_score": result.get("match", 0),
+                            "interview_probability": result.get(
+                                "interview_probability",
+                                0,
+                            ),
+                            "resume_version": result.get(
+                                "industry_positioning",
+                                "",
+                            ),
+                            "tailored_resume": resume_text,
+                            "cover_letter": result.get("cover_letter", ""),
+                            "linkedin_about": result.get("linkedin_about", ""),
+                            "application_status": "Applied",
+                        },
+                    )
+
+                    st.session_state["last_result"] = result
+                    st.session_state["last_resume"] = resume_text
+                    st.session_state["last_pdf"] = pdf_bytes
+                    st.session_state["last_premium_pdf"] = premium_pdf_bytes
+                    st.session_state["last_premium_docx"] = premium_docx_bytes
+                    st.session_state["last_company"] = company
+                    st.session_state["last_saved_id"] = app_row["id"]
+
+                    st.success("Resume generated and application saved.")
+
+            except Exception as exc:
+                st.error(
+                    f"Generation failed: {type(exc).__name__}: {exc}"
+                )
+
+    if st.session_state.get("last_resume"):
+        st.divider()
+        display_result(
+            st.session_state["last_result"],
+            st.session_state["last_resume"],
+            st.session_state["last_pdf"],
+            st.session_state["last_premium_pdf"],
+            st.session_state["last_premium_docx"],
+        )
+
 
 with tab_history:
     st.header("Application History")
-    search = st.text_input("Search company, role, or status")
+
+    filter_col1, filter_col2 = st.columns([2, 1])
+
+    search = filter_col1.text_input(
+        "Search",
+        placeholder="Company, role, status, industry, or JD keyword",
+    )
+
+    status_filter = filter_col2.selectbox(
+        "Status filter",
+        ["All", *STATUS_OPTIONS],
+    )
+
     try:
-        rows = list_applications(user["id"], search)
+        rows = list_applications(
+            user["id"],
+            search=search,
+            status=status_filter,
+            limit=2000,
+        )
     except DatabaseError as exc:
-        st.error(str(exc)); rows = []
+        st.error(str(exc))
+        rows = []
+
+    st.caption(f"{len(rows)} saved applications")
 
     if not rows:
         st.info("No saved applications found.")
-    else:
-        import pandas as pd
 
-        table_rows = []
-        for row in rows:
-            created = str(row.get("created_at", ""))
-            table_rows.append({
-                "Serial": int(row.get("display_serial") or row.get("serial_number") or 0),
-                "Date": created[:10],
-                "Company": row.get("company_name", ""),
-                "Position": row.get("role_title", ""),
-                "Location": row.get("location", ""),
-                "ATS": int(row.get("ats_score") or 0),
-                "Recruiter Match": int(row.get("match_score") or 0),
-                "Interview Probability": int(row.get("interview_probability") or 0),
-                "Status": row.get("application_status", "Applied"),
-                "JD Saved": "Yes" if str(row.get("job_description", "")).strip() else "No",
-            })
-
-        history_df = pd.DataFrame(table_rows).sort_values("Serial", ascending=False)
-        st.dataframe(
-            history_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "ATS": st.column_config.ProgressColumn("ATS", min_value=0, max_value=100, format="%d%%"),
-                "Recruiter Match": st.column_config.ProgressColumn("Recruiter Match", min_value=0, max_value=100, format="%d%%"),
-                "Interview Probability": st.column_config.ProgressColumn("Interview Probability", min_value=0, max_value=100, format="%d%%"),
-            },
+    for row in rows:
+        title = (
+            f"{row.get('company_name', '')} | "
+            f"{row.get('role_title', '')} | "
+            f"{row.get('application_status', 'Applied')} | "
+            f"Match {row.get('match_score', 0)}% | "
+            f"ATS {row.get('ats_score', 0)}%"
         )
 
-        row_by_serial = {int(r.get("display_serial") or r.get("serial_number") or 0): r for r in rows}
-        serial_options = sorted(row_by_serial, reverse=True)
-        selected_serial = st.selectbox(
-            "Open application",
-            serial_options,
-            format_func=lambda value: f"#{value} — {row_by_serial[value].get('company_name','')} | {row_by_serial[value].get('role_title','')}",
-        )
-        row = row_by_serial[selected_serial]
+        with st.expander(title):
+            info1, info2, info3, info4 = st.columns(4)
+            info1.write(
+                f"**Created:** {str(row.get('created_at', ''))[:10]}"
+            )
+            info2.write(
+                f"**Industry:** {row.get('detected_industry', '') or '—'}"
+            )
+            info3.write(
+                f"**Interview estimate:** "
+                f"{row.get('interview_probability', 0)}%"
+            )
+            info4.write(
+                f"**Location:** {row.get('location', '') or '—'}"
+            )
 
-        st.subheader(f"Application #{selected_serial}: {row.get('company_name','')} — {row.get('role_title','')}")
-        a, b, c, d = st.columns(4)
-        a.metric("ATS", f"{int(row.get('ats_score') or 0)}%")
-        b.metric("Recruiter Match", f"{int(row.get('match_score') or 0)}%")
-        c.metric("Interview Probability", f"{int(row.get('interview_probability') or 0)}%")
-        d.metric("Created", str(row.get("created_at", ""))[:10] or "—")
+            current_status = row.get("application_status", "Applied")
+            status_index = (
+                STATUS_OPTIONS.index(current_status)
+                if current_status in STATUS_OPTIONS
+                else 0
+            )
 
-        status = st.selectbox(
-            "Status", STATUS_OPTIONS,
-            index=STATUS_OPTIONS.index(row.get("application_status", "Applied")) if row.get("application_status") in STATUS_OPTIONS else 0,
-            key=f"status_{row['id']}",
-        )
-        notes = st.text_area("Notes", row.get("notes", "") or "", key=f"notes_{row['id']}")
-        x, y, z = st.columns(3)
-        if x.button("Save changes", key=f"save_{row['id']}"):
-            update_application(row["id"], {"application_status": status, "notes": notes}); st.rerun()
-        if y.button("Delete application", key=f"delete_{row['id']}"):
-            delete_application(row["id"]); st.rerun()
-        z.download_button(
-            "Download Resume PDF",
-            generate_pdf(row.get("tailored_resume", "") or "", row.get("resume_theme") or "Executive Premium"),
-            file_name=f"{safe_name(row.get('company_name','company'))}_resume.pdf",
-            mime="application/pdf", key=f"pdf_{row['id']}",
-        )
+            edit1, edit2 = st.columns(2)
 
-        details, jd_tab, resume_tab, cover_tab, data_tab = st.tabs([
-            "Application Details", "Full Job Description", "Generated Resume", "Cover Letter", "All Saved Data"
-        ])
-        with details:
-            st.markdown(f"**Company:** {row.get('company_name','—')}")
-            st.markdown(f"**Position:** {row.get('role_title','—')}")
-            st.markdown(f"**Location:** {row.get('location','—')}")
-            st.markdown(f"**Job URL:** {row.get('job_url','—') or '—'}")
-            st.markdown(f"**Detected industry:** {row.get('detected_industry','—') or '—'}")
-            st.markdown(f"**Resume theme:** {row.get('resume_theme','—') or '—'}")
-        with jd_tab:
-            jd_value = row.get("job_description", "") or ""
-            if jd_value.strip():
-                st.text_area("Saved job description", jd_value, height=500, disabled=True, key=f"jd_{row['id']}")
-                st.download_button("Download JD as TXT", jd_value, file_name=f"{safe_name(row.get('company_name','company'))}_job_description.txt", mime="text/plain", key=f"jd_dl_{row['id']}")
-            else:
-                st.warning("This older application does not contain a saved job description.")
-        with resume_tab:
-            show_resume(row.get("tailored_resume", "") or "")
-        with cover_tab:
-            st.text_area("Saved cover letter", row.get("cover_letter", "") or "No cover letter saved.", height=500, disabled=True, key=f"cover_{row['id']}")
-        with data_tab:
-            raw_data = row.get("generation_data", "") or ""
+            status = edit1.selectbox(
+                "Status",
+                STATUS_OPTIONS,
+                index=status_index,
+                key=f"status_{row['id']}",
+            )
+
+            recruiter_name = edit2.text_input(
+                "Recruiter name",
+                value=row.get("recruiter_name", "") or "",
+                key=f"recruiter_{row['id']}",
+            )
+
+            recruiter_email = st.text_input(
+                "Recruiter email",
+                value=row.get("recruiter_email", "") or "",
+                key=f"recruiter_email_{row['id']}",
+            )
+
+            notes = st.text_area(
+                "Notes",
+                value=row.get("notes", "") or "",
+                key=f"notes_{row['id']}",
+            )
+
+            interview_notes = st.text_area(
+                "Interview notes",
+                value=row.get("interview_notes", "") or "",
+                key=f"interview_notes_{row['id']}",
+            )
+
+            b1, b2, b3 = st.columns(3)
+
+            if b1.button(
+                "Save updates",
+                key=f"save_{row['id']}",
+            ):
+                update_application(
+                    row["id"],
+                    {
+                        "application_status": status,
+                        "notes": notes,
+                        "interview_notes": interview_notes,
+                        "recruiter_name": recruiter_name,
+                        "recruiter_email": recruiter_email,
+                    },
+                    user_id=user["id"],
+                )
+                st.success("Updated.")
+                st.rerun()
+
+            if b2.button(
+                "Delete",
+                key=f"delete_{row['id']}",
+            ):
+                delete_application(
+                    row["id"],
+                    user_id=user["id"],
+                )
+                st.success("Deleted.")
+                st.rerun()
+
+            resume_text = row.get("tailored_resume", "") or ""
+
             try:
-                parsed_data = json.loads(raw_data) if isinstance(raw_data, str) and raw_data.strip() else raw_data
+                history_pdf = generate_pdf(resume_text)
             except Exception:
-                parsed_data = raw_data
-            if parsed_data:
-                st.json(parsed_data)
-            else:
-                st.info("No structured generation data was saved for this older application.")
-            with st.expander("Database record"):
-                st.json({k: v for k, v in row.items() if k not in {"tailored_resume", "cover_letter", "job_description", "generation_data"}})
+                history_pdf = b""
+
+            b3.download_button(
+                "Download PDF",
+                data=history_pdf,
+                file_name=(
+                    f"{safe_name(row.get('company_name', 'company'))}_resume.pdf"
+                ),
+                mime="application/pdf",
+                key=f"pdf_{row['id']}",
+                disabled=not bool(history_pdf),
+            )
+
+            st.markdown("#### Job Description")
+            st.text_area(
+                "Saved JD",
+                value=row.get("job_description", "") or "",
+                height=190,
+                disabled=True,
+                key=f"jd_{row['id']}",
+                label_visibility="collapsed",
+            )
+
+            st.markdown("#### Resume")
+            show_resume(resume_text)
+
+            if row.get("cover_letter"):
+                st.markdown("#### Cover Letter")
+                st.text_area(
+                    "Cover letter",
+                    value=row["cover_letter"],
+                    height=250,
+                    disabled=True,
+                    key=f"cl_{row['id']}",
+                    label_visibility="collapsed",
+                )
+
+            if row.get("linkedin_about"):
+                st.markdown("#### LinkedIn About")
+                st.text_area(
+                    "LinkedIn About",
+                    value=row["linkedin_about"],
+                    height=200,
+                    disabled=True,
+                    key=f"linkedin_{row['id']}",
+                    label_visibility="collapsed",
+                )
+
 
 with tab_dashboard:
-    stats = dashboard_stats(user["id"])
-    a, b, c, d, e, f = st.columns(6)
-    a.metric("Applications", stats["total"]); b.metric("Average ATS", f"{stats['avg_ats']}%")
-    c.metric("Average Match", f"{stats['avg_match']}%"); d.metric("Interviews", stats["interviews"]); e.metric("Offers", stats["offers"]); f.metric("Response rate", f"{stats.get('response_rate',0)}%")
+    st.header("Dashboard")
+
+    try:
+        stats = dashboard_stats(user["id"])
+    except DatabaseError as exc:
+        st.error(str(exc))
+        stats = {
+            "total": 0,
+            "avg_ats": 0,
+            "avg_match": 0,
+            "avg_interview_probability": 0,
+            "interviews": 0,
+            "offers": 0,
+            "rejected": 0,
+            "response_rate": 0,
+        }
+
+    a, b, c, d = st.columns(4)
+    a.metric("Applications", stats["total"])
+    b.metric("Average ATS", f"{stats['avg_ats']}%")
+    c.metric("Average Match", f"{stats['avg_match']}%")
+    d.metric(
+        "Average interview estimate",
+        f"{stats['avg_interview_probability']}%",
+    )
+
+    e, f, g, h = st.columns(4)
+    e.metric("Interviews", stats["interviews"])
+    f.metric("Offers", stats["offers"])
+    g.metric("Rejected", stats["rejected"])
+    h.metric("Response rate", f"{stats['response_rate']}%")
+
+    if stats["total"] >= 30 and stats["interviews"] == 0:
+        st.warning(
+            "No interviews are recorded yet. Review role targeting, "
+            "resume positioning, application channels, and referral outreach."
+        )
